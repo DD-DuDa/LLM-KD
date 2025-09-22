@@ -10,15 +10,15 @@ export WANDB_DISABLED=true
 deepspeed --num_gpus=4 train.py \
     --teacher_model_name_or_path $Teacher_PATH \
     --student_model_name_or_path $Student_PATH \
-    --dataset_name "wikitext" \
-    --model_max_length 128 \
+    --dataset_name "eg-balanced" \
+    --model_max_length 32 \
     --output_dir $SAVE_PATH \
     --logging_dir $2 \
     --num_train_epochs $3 \
     --bf16 True \
     --seed 42 \
-    --per_device_train_batch_size 2 \
-    --per_device_eval_batch_size 2 \
+    --per_device_train_batch_size 1 \
+    --per_device_eval_batch_size 1 \
     --gradient_accumulation_steps 1 \
     --gradient_checkpointing True \
     --eval_strategy "steps" \
@@ -35,4 +35,4 @@ deepspeed --num_gpus=4 train.py \
     --deepspeed config/zero.json \
     --train_kd True \
     --kd_loss_type "forward" \
-    --max_train_samples 1000 \
+    --max_train_samples 1000

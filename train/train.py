@@ -39,7 +39,7 @@ class ModelArguments:
 
 @dataclass
 class DataArguments:
-    dataset_name: str = field(default=None, metadata={"help": "Name of the dataset to use (e.g., 'wikitext', 'alpaca', etc.)."})
+    dataset_name: str = field(default=None, metadata={"help": "Name of the dataset to use (e.g., 'wikitext', 'alpaca', 'eg-balanced', etc.)."})
     max_train_samples: Optional[int] = field(default=None, metadata={"help": "Maximum number of training samples to use."})
 
 @dataclass
@@ -115,6 +115,7 @@ def _tokenize_fn(strings: Sequence[str], tokenizer: transformers.PreTrainedToken
         labels_lens=labels_lens,
     )
 
+
 def preprocess(
     sources: Sequence[str],
     targets: Sequence[str],
@@ -125,12 +126,11 @@ def preprocess(
     examples_tokenized, sources_tokenized = [_tokenize_fn(strings, tokenizer) for strings in (examples, sources)]
     input_ids = examples_tokenized["input_ids"]
     labels = copy.deepcopy(input_ids)
-    
-    # THIS Is useful for student learn what teacher understanding:
-
+    # TODO: Check whether it is useful for student learn what teacher understanding:
     # for label, source_len in zip(labels, sources_tokenized["input_ids_lens"]):
     #     label[:source_len] = IGNORE_INDEX
     return dict(input_ids=input_ids, labels=labels)
+
 
 class SupervisedDataset(Dataset):
     """Dataset for supervised fine-tuning."""
@@ -162,6 +162,9 @@ class SupervisedDataset(Dataset):
             self.sources, self.targets = self.sources[:split_num], self.targets[:split_num]
             print(f"Using {len(self.sources)} samples to evaluation")
 
+        # Store dataset name for special processing
+        self.dataset_name = dataset_name
+
     def __len__(self):
         return len(self.sources)
 
@@ -173,18 +176,7 @@ class DataCollatorForSupervisedDataset(object):
     """Collate examples for supervised fine-tuning."""
 
     tokenizer: transformers.PreTrainedTokenizer
-
-    def naive__call__(self, instances: Sequence[Dict]) -> Dict[str, torch.Tensor]:
-        input_ids, labels = tuple([instance[key] for instance in instances] for key in ("input_ids", "labels"))
-        input_ids = torch.nn.utils.rnn.pad_sequence(
-            input_ids, batch_first=True, padding_value=self.tokenizer.pad_token_id
-        )
-        labels = torch.nn.utils.rnn.pad_sequence(labels, batch_first=True, padding_value=IGNORE_INDEX)
-        return dict(
-            input_ids=input_ids,
-            labels=labels,
-            attention_mask=input_ids.ne(self.tokenizer.pad_token_id),
-        )
+    dataset_name: str = "default"
 
     def __call__(self, instances: Sequence[Dict]) -> Dict[str, torch.Tensor]:
         sources = []
@@ -212,7 +204,7 @@ def make_supervised_data_module(tokenizer: transformers.PreTrainedTokenizer, dat
     """Make dataset and collator for supervised fine-tuning."""
     train_dataset = SupervisedDataset(tokenizer=tokenizer, dataset_name=data_args.dataset_name, max_sample=data_args.max_train_samples, split="train")
     eval_dataset = SupervisedDataset(tokenizer=tokenizer, dataset_name=data_args.dataset_name, max_sample=data_args.max_train_samples, split="eval")
-    data_collator = DataCollatorForSupervisedDataset(tokenizer=tokenizer)
+    data_collator = DataCollatorForSupervisedDataset(tokenizer=tokenizer, dataset_name=data_args.dataset_name)
     return dict(train_dataset=train_dataset, eval_dataset=eval_dataset, data_collator=data_collator)
 
 
@@ -220,7 +212,7 @@ def train():
     parser = transformers.HfArgumentParser((ModelArguments, DataArguments, TrainingArguments))
     model_args, data_args, training_args = parser.parse_args_into_dataclasses()
 
-    random.seed(TrainingArguments.seed)
+    random.seed(training_args.seed)
     n_gpus = torch.cuda.device_count()
     max_memory = f'49000MB'
     max_memory = {i: max_memory for i in range(n_gpus)}
@@ -295,7 +287,7 @@ def train():
         trainer = KDTrainer(model=model, tokenizer=tokenizer, teacher_model=teacher_model, loss_type=training_args.kd_loss_type, args=training_args, **data_module)
     else:
         trainer = Trainer(model=model, tokenizer=tokenizer, args=training_args, **data_module)
-
+        
     trainer.train()
     trainer.save_state()
     safe_save_model_for_hf_trainer(trainer=trainer, output_dir=training_args.output_dir)
